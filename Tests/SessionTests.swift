@@ -559,8 +559,12 @@ final class SessionTestCase: BaseTestCase {
         let monitor = ClosureEventMonitor()
         let didCreateRequest = expectation(description: "Request created")
         monitor.requestDidCreateTask = { _, _ in didCreateRequest.fulfill() }
-        var session: Session? = Session(startRequestsImmediately: false, eventMonitors: [monitor])
+        var session: Session? = Session(startRequestsImmediately: false, requestSetup: .eager, eventMonitors: [monitor])
+        #if compiler(>=6.2.3) // Started emitting a diagnostic in 6.2.2, so lets conditionally use it.
+        weak let weakSession = session
+        #else
         weak var weakSession = session
+        #endif
 
         // When
         let request = session?.request(.default)
@@ -739,7 +743,7 @@ final class SessionTestCase: BaseTestCase {
         let headerAdapter = HeaderAdapter()
         let monitor = ClosureEventMonitor()
 
-        let session = Session(startRequestsImmediately: false, interceptor: methodAdapter, eventMonitors: [monitor])
+        let session = Session(startRequestsImmediately: false, requestSetup: .eager, interceptor: methodAdapter, eventMonitors: [monitor])
 
         // When
         let expectation1 = expectation(description: "Request 1 created")
@@ -771,7 +775,7 @@ final class SessionTestCase: BaseTestCase {
         let headerAdapter = HeaderAdapter()
         let monitor = ClosureEventMonitor()
 
-        let session = Session(startRequestsImmediately: false, interceptor: methodAdapter, eventMonitors: [monitor])
+        let session = Session(startRequestsImmediately: false, requestSetup: .eager, interceptor: methodAdapter, eventMonitors: [monitor])
 
         // When
         let expectation1 = expectation(description: "Request 1 created")
@@ -804,7 +808,7 @@ final class SessionTestCase: BaseTestCase {
         let headerAdapter = HeaderAdapter()
         let monitor = ClosureEventMonitor()
 
-        let session = Session(startRequestsImmediately: false, interceptor: methodAdapter, eventMonitors: [monitor])
+        let session = Session(startRequestsImmediately: false, requestSetup: .eager, interceptor: methodAdapter, eventMonitors: [monitor])
 
         // When
         let expectation1 = expectation(description: "Request 1 created")
@@ -837,7 +841,7 @@ final class SessionTestCase: BaseTestCase {
         let headerAdapter = HeaderAdapter()
         let monitor = ClosureEventMonitor()
 
-        let session = Session(startRequestsImmediately: false, interceptor: methodAdapter, eventMonitors: [monitor])
+        let session = Session(startRequestsImmediately: false, requestSetup: .eager, interceptor: methodAdapter, eventMonitors: [monitor])
 
         // When
         let expectation1 = expectation(description: "Request 1 created")
@@ -870,7 +874,7 @@ final class SessionTestCase: BaseTestCase {
         let headerAdapter = HeaderAdapter()
         let monitor = ClosureEventMonitor()
 
-        let session = Session(startRequestsImmediately: false, interceptor: methodAdapter, eventMonitors: [monitor])
+        let session = Session(startRequestsImmediately: false, requestSetup: .eager, interceptor: methodAdapter, eventMonitors: [monitor])
 
         // When
         let expectation1 = expectation(description: "Request 1 created")
@@ -902,7 +906,7 @@ final class SessionTestCase: BaseTestCase {
         let headerAdapter = HeaderAdapter(throwsError: true)
         let monitor = ClosureEventMonitor()
 
-        let session = Session(startRequestsImmediately: false, interceptor: methodAdapter, eventMonitors: [monitor])
+        let session = Session(startRequestsImmediately: false, requestSetup: .eager, interceptor: methodAdapter, eventMonitors: [monitor])
 
         // When
         let expectation1 = expectation(description: "Request 1 created")
@@ -1064,7 +1068,7 @@ final class SessionTestCase: BaseTestCase {
     }
 
     @MainActor
-    func testThatSessionCallsRequestRetrierThenSessionRetrierWhenRequestEncountersError() {
+    func testThatSessionCallsSessionRetrierTheRequestRetrierWhenRequestEncountersError() {
         // Given
         let sessionHandler = RequestHandler()
         let requestHandler = RequestHandler()
@@ -1087,12 +1091,12 @@ final class SessionTestCase: BaseTestCase {
         // Then
         XCTAssertEqual(sessionHandler.adaptCalledCount, 3)
         XCTAssertEqual(sessionHandler.adaptedCount, 3)
-        XCTAssertEqual(sessionHandler.retryCalledCount, 3)
-        XCTAssertEqual(sessionHandler.retryCount, 3)
+        XCTAssertEqual(sessionHandler.retryCalledCount, 4)
+        XCTAssertEqual(sessionHandler.retryCount, 4)
         XCTAssertEqual(requestHandler.adaptCalledCount, 3)
         XCTAssertEqual(requestHandler.adaptedCount, 3)
-        XCTAssertEqual(requestHandler.retryCalledCount, 4)
-        XCTAssertEqual(requestHandler.retryCount, 4)
+        XCTAssertEqual(requestHandler.retryCalledCount, 3)
+        XCTAssertEqual(requestHandler.retryCount, 3)
         XCTAssertEqual(request.retryCount, 2)
         XCTAssertEqual(response?.result.isSuccess, false)
         assert(on: session.rootQueue) {
@@ -1504,7 +1508,7 @@ final class SessionTestCase: BaseTestCase {
         events.sessionDidBecomeInvalidWithError = { _, _ in
             invalidationExpectation.fulfill()
         }
-        var session: Session? = Session(startRequestsImmediately: false, eventMonitors: [events])
+        var session: Session? = Session(startRequestsImmediately: false, requestSetup: .eager, eventMonitors: [events])
         var error: AFError?
         let requestExpectation = expectation(description: "request should complete")
 
@@ -1652,7 +1656,7 @@ final class SessionMassActionTestCase: BaseTestCase {
         let massActions = expectation(description: "cancel all requests should be called")
         let monitor = ClosureEventMonitor()
         monitor.requestDidCreateTask = { _, _ in createdTasks.fulfill() }
-        let session = Session(eventMonitors: [monitor])
+        let session = Session(requestSetup: .eager, eventMonitors: [monitor])
         let request = Endpoint.delay(1)
         var requests: [DataRequest] = []
 
@@ -1683,6 +1687,51 @@ final class SessionMassActionTestCase: BaseTestCase {
         let monitor = ClosureEventMonitor()
         monitor.requestDidCreateTask = { _, _ in createdTasks.fulfill() }
         monitor.requestDidGatherMetrics = { _, _ in gatheredMetrics.fulfill() }
+        let session = Session(requestSetup: .eager, eventMonitors: [monitor])
+        let request = Endpoint.delay(1)
+        var requests: [DataRequest] = []
+        var responses: [DataResponse<Data?, AFError>] = []
+
+        // When
+        requests = (0..<count).map { _ in session.request(request) }
+
+        wait(for: [createdTasks], timeout: timeout)
+
+        for request in requests {
+            request.response { response in
+                responses.append(response)
+                completion.fulfill()
+            }
+        }
+
+        session.cancelAllRequests {
+            cancellation.fulfill()
+        }
+
+        wait(for: [gatheredMetrics, cancellation, completion], timeout: timeout)
+
+        // Then
+        XCTAssertTrue(responses.allSatisfy { $0.error?.isExplicitlyCancelledError == true })
+        assert(on: session.rootQueue) {
+            XCTAssertTrue(session.requestTaskMap.isEmpty, "requestTaskMap should be empty but has \(session.requestTaskMap.count) items")
+            XCTAssertTrue(session.activeRequests.isEmpty, "activeRequests should be empty but has \(session.activeRequests.count) items")
+        }
+    }
+
+    @MainActor
+    func testThatLazyAutomaticallyResumedRequestsCanBeMassCancelled() {
+        // Given
+        let count = 100
+        let completion = expectation(description: "all requests should finish")
+        completion.expectedFulfillmentCount = count
+        let createdTasks = expectation(description: "all tasks created")
+        createdTasks.expectedFulfillmentCount = count
+        let gatheredMetrics = expectation(description: "metrics gathered for all tasks")
+        gatheredMetrics.expectedFulfillmentCount = count
+        let cancellation = expectation(description: "cancel all requests should be called")
+        let monitor = ClosureEventMonitor()
+        monitor.requestDidCreateTask = { _, _ in createdTasks.fulfill() }
+        monitor.requestDidGatherMetrics = { _, _ in gatheredMetrics.fulfill() }
         let session = Session(eventMonitors: [monitor])
         let request = Endpoint.delay(1)
         var requests: [DataRequest] = []
@@ -1690,6 +1739,51 @@ final class SessionMassActionTestCase: BaseTestCase {
 
         // When
         requests = (0..<count).map { _ in session.request(request) }
+
+        for request in requests {
+            request.response { response in
+                responses.append(response)
+                completion.fulfill()
+            }
+        }
+
+        wait(for: [createdTasks], timeout: timeout)
+
+        session.cancelAllRequests {
+            cancellation.fulfill()
+        }
+
+        wait(for: [gatheredMetrics, cancellation, completion], timeout: timeout)
+
+        // Then
+        XCTAssertTrue(responses.allSatisfy { $0.error?.isExplicitlyCancelledError == true })
+        assert(on: session.rootQueue) {
+            XCTAssertTrue(session.requestTaskMap.isEmpty, "requestTaskMap should be empty but has \(session.requestTaskMap.count) items")
+            XCTAssertTrue(session.activeRequests.isEmpty, "activeRequests should be empty but has \(session.activeRequests.count) items")
+        }
+    }
+
+    @MainActor
+    func testThatInstanceAutomaticallyResumedRequestsCanBeMassCancelled() {
+        // Given
+        let count = 100
+        let completion = expectation(description: "all requests should finish")
+        completion.expectedFulfillmentCount = count
+        let createdTasks = expectation(description: "all tasks created")
+        createdTasks.expectedFulfillmentCount = count
+        let gatheredMetrics = expectation(description: "metrics gathered for all tasks")
+        gatheredMetrics.expectedFulfillmentCount = count
+        let cancellation = expectation(description: "cancel all requests should be called")
+        let monitor = ClosureEventMonitor()
+        monitor.requestDidCreateTask = { _, _ in createdTasks.fulfill() }
+        monitor.requestDidGatherMetrics = { _, _ in gatheredMetrics.fulfill() }
+        let session = Session(startRequestsImmediately: false, requestSetup: .eager, eventMonitors: [monitor])
+        let request = Endpoint.delay(1)
+        var requests: [DataRequest] = []
+        var responses: [DataResponse<Data?, AFError>] = []
+
+        // When
+        requests = (0..<count).map { _ in session.request(request, shouldAutomaticallyResume: true) }
 
         wait(for: [createdTasks], timeout: timeout)
 
@@ -1728,6 +1822,48 @@ final class SessionMassActionTestCase: BaseTestCase {
         let monitor = ClosureEventMonitor()
         monitor.requestDidCreateTask = { _, _ in createdTasks.fulfill() }
         monitor.requestDidGatherMetrics = { _, _ in gatheredMetrics.fulfill() }
+        let session = Session(startRequestsImmediately: false, requestSetup: .eager, eventMonitors: [monitor])
+        let request = Endpoint.delay(1)
+        var responses: [DataResponse<Data?, AFError>] = []
+
+        // When
+        for _ in 0..<count {
+            session.request(request).response { response in
+                responses.append(response)
+                completion.fulfill()
+            }
+        }
+
+        wait(for: [createdTasks], timeout: timeout)
+
+        session.cancelAllRequests {
+            cancellation.fulfill()
+        }
+
+        wait(for: [gatheredMetrics, cancellation, completion], timeout: timeout)
+
+        // Then
+        XCTAssertTrue(responses.allSatisfy { $0.error?.isExplicitlyCancelledError == true })
+        assert(on: session.rootQueue) {
+            XCTAssertTrue(session.requestTaskMap.isEmpty, "requestTaskMap should be empty but has \(session.requestTaskMap.count) items")
+            XCTAssertTrue(session.activeRequests.isEmpty, "activeRequests should be empty but has \(session.activeRequests.count) items")
+        }
+    }
+
+    @MainActor
+    func testThatLazyManuallyResumedRequestsCanBeMassCancelled() {
+        // Given
+        let count = 100
+        let completion = expectation(description: "all requests should finish")
+        completion.expectedFulfillmentCount = count
+        let createdTasks = expectation(description: "all tasks created")
+        createdTasks.expectedFulfillmentCount = count
+        let gatheredMetrics = expectation(description: "metrics gathered for all tasks")
+        gatheredMetrics.expectedFulfillmentCount = count
+        let cancellation = expectation(description: "cancel all requests should be called")
+        let monitor = ClosureEventMonitor()
+        monitor.requestDidCreateTask = { _, _ in createdTasks.fulfill() }
+        monitor.requestDidGatherMetrics = { _, _ in gatheredMetrics.fulfill() }
         let session = Session(startRequestsImmediately: false, eventMonitors: [monitor])
         let request = Endpoint.delay(1)
         var responses: [DataResponse<Data?, AFError>] = []
@@ -1738,6 +1874,7 @@ final class SessionMassActionTestCase: BaseTestCase {
                 responses.append(response)
                 completion.fulfill()
             }
+            .resume()
         }
 
         wait(for: [createdTasks], timeout: timeout)
